@@ -13,16 +13,27 @@ Before anything runs, all passwords, API keys, and access tokens are locked away
 Instead of manually clicking through a website to rent a database, this project uses **Terraform** (Infrastructure as Code). Terraform reads a blueprint file (`main.tf`), securely logs into Supabase, and automatically builds a live PostgreSQL database in seconds.
 
 ### 3. Creating the Brain (Knowledge Seeding)
-AI models don't naturally know private company information. A Python script (`seed_db.py`) takes mock internal company documents, slices them into small, readable paragraphs, and saves them directly into the newly built cloud database.
+AI models don't naturally know private company information. A Python script (`seed_db.py`) takes mock internal company documents, slices them into small, readable paragraphs, embeds each one with Google's embedding model, and saves both the text and its vector into the newly built cloud database (`enterprise_knowledge`, with a `pgvector` `embedding` column).
 
 ### 4. The Smart Agent (LangGraph)
 The main script (`agent.py`) acts as an autonomous worker. When asked a question, it uses a "Reason and Act" loop:
 * **Reason:** It realizes it doesn't know the answer off the top of its head.
-* **Act:** It uses a custom tool to connect to our Supabase database, search for keywords, and pull the exact documentation needed.
+* **Act:** It uses a custom tool (`db.py`) that embeds the question and ranks stored chunks by cosine distance in Postgres — real semantic search, not keyword matching, so it finds the right documentation even when the question is phrased differently from the source text.
 * **Answer:** It reads the pulled data and generates a highly accurate, company-specific response using Google's Gemini model.
+
+Both the embedding call and the database call are wrapped with retries (`db.py`); if either fails after retries, the tool records the failure on its OpenTelemetry span and returns a graceful fallback instead of crashing the agent.
 
 ### 5. The Stopwatch (Observability)
 In the real world, you need to know if an app is slow because of the database or the AI. The agent is wrapped in **OpenTelemetry**. Every time it answers a question, it prints a raw JSON trace to the terminal showing exactly how many milliseconds the database took versus how long the AI took to think.
+
+### 6. Talking to It Live (WebSocket Streaming)
+`agent.py`'s `__main__` block blocks until the whole ReAct loop finishes before printing anything — fine for a one-shot script, not how a real chat interface should feel. `server.py` exposes the same agent over a WebSocket (`ws://localhost:8765`) and streams each step (tool call → tool result → final answer) to the client as it happens.
+
+```bash
+python server.py
+# from another terminal/client, send: {"question": "..."}
+# and read the stream of {"type": ..., "content": ...} events
+```
 
 ---
 
@@ -42,7 +53,7 @@ terraform apply
 ```bash
 python3 -m venv venv
 source venv/bin/activate
-pip install langchain langchain-google-genai psycopg2-binary langgraph opentelemetry-api opentelemetry-sdk python-dotenv
+pip install -r requirements.txt
 ```
 
 **4. Seed the Data**
@@ -53,6 +64,11 @@ python seed_db.py
 **5. Run the Traced AI Agent**
 ```bash
 python agent.py
+```
+
+**6. (Optional) Run the Streaming WebSocket Server**
+```bash
+python server.py
 ```
 
 

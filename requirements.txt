@@ -1,0 +1,9 @@
+langchain
+langchain-google-genai
+langgraph
+psycopg2-binary
+opentelemetry-api
+opentelemetry-sdk
+python-dotenv
+tenacity
+websockets
